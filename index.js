@@ -1,11 +1,16 @@
-const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = require("@adiwajshing/baileys");
+const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = require("@adiwajshing/baileys")
 const fs = require('fs')
 const MessageHelper = require('./lib/helper/message-helper.js')
+const cronJob = require('cron').CronJob
+const Quran = require('./lib/utils/quran-reader.js')
+const Participant = require('./lib/utils/participant-writer.js')
+
+var conn = null
 
 const connectWA = async () => {
     const { state, saveCreds } = await useMultiFileAuthState(__dirname + '/db/auth_info_baileys')
 
-    const conn = await makeWASocket({
+    conn = await makeWASocket({
         printQRInTerminal: true,
         auth: state
     })
@@ -17,7 +22,6 @@ const connectWA = async () => {
         if(connection === 'close') {
 
             const shouldReconnect = lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut
-            console.log('connection closed')
             
             if(shouldReconnect) {
                 connectWA()
@@ -30,10 +34,21 @@ const connectWA = async () => {
 
     conn.ev.on('messages.upsert', m => {
         const message = m.messages
-        new MessageHelper({
-            wa: conn,
-            message: message
-        })
+        if(message[0].message){
+            new MessageHelper({
+                wa: conn,
+                message: message
+            })    
+        }else{
+            if(message[0].messageStubType == 28){
+                Participant.delete(message[0].key.remoteJid)
+            }
+
+            if(message[0].messageStubType == 32){
+                Participant.delete(message[0].key.remoteJid)
+            }
+        }
+
         
     })
 
@@ -43,8 +58,16 @@ const connectWA = async () => {
     })
 
     conn.ev.on('creds.update', saveCreds)
-
-    
 }
 
 connectWA()
+
+const runCronJob = () => {
+    new cronJob('0 5,18 * * * *', () => {
+        Object.keys(Participant.get()).map((key) => {
+            Quran.getAndSend(conn, key, null, 0, 0, true)
+        })
+    }).start()
+}
+
+runCronJob()
